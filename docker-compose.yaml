@@ -1,0 +1,152 @@
+version: "3"
+services:
+  redis:
+      image: "redis:alpine"
+      container_name: canal-redis
+      command: redis-server --appendonly yes
+      ports:
+        - "6375:6379"
+      volumes:
+        - ./redis/data:/data:rw
+      networks:
+        - canal-test
+  db:
+      platform: linux/amd64
+      image: mysql:latest
+      container_name: canal-db
+      command: --default-authentication-plugin=mysql_native_password
+      restart: always
+      environment:
+        MYSQL_ROOT_PASSWORD: secret
+      ports:
+        - 3310:3306
+      volumes:
+        - ./mysql/conf.d/slave.cnf:/etc/mysql/conf.d/slave.cnf
+        - ./mysql/mysql/data:/var/lib/mysql:rw
+        - ./local:/root:rw    
+      networks:
+        - canal-test
+  php81:
+    build:
+        context: ./php
+    container_name: canal-php81
+    volumes:
+        - ./canal-project:/var/www/html/canal-project:rw
+        - ~/.ssh:/root/.ssh:rw
+    ports:
+      - 8010:8010
+    networks:
+      - canal-test
+    depends_on:
+      - redis
+      - kafka
+      - db 
+      
+  zookeeper:
+    image: 'bitnami/zookeeper:latest'
+    container_name: canal-zk
+    ports:
+      - '2188:2181'
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      # - ZOO_ENABLE_AUTH=yes
+      # - ZOO_SERVER_USERS=kafka
+      # - ZOO_SERVER_PASSWORDS=kafka_password
+    networks:
+      - canal-test
+  kafka:
+    image: 'bitnami/kafka:latest'
+    container_name: canal-kafka
+    ports:
+      - '9098:9092'
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://canal-kafka:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://canal-kafka:9092
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=canal-zk:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      # - KAFKA_CFG_LISTENERS=SASL_SSL://:9092
+      # - KAFKA_CFG_ADVERTISED_LISTENERS=SASL_SSL://:9092
+      # - KAFKA_ZOOKEEPER_USER=kafka
+      # - KAFKA_ZOOKEEPER_PASSWORD=kafka_password
+      # - KAFKA_CLIENT_USER=user
+      # - KAFKA_CLIENT_PASSWORD=password
+      # - KAFKA_CERTIFICATE_PASSWORD=certificatePassword123
+    depends_on:
+      - zookeeper
+    networks:
+      - canal-test
+  canal:
+    image: canal/canal-server:latest
+    container_name: canal-server          # 容器名称
+    restart: always                 # 失败自动重启策略
+    volumes:
+      - ./canal-server/conf/canal.properties:/home/admin/canal-server/conf/canal.properties
+      - ./canal-server/conf/example/instance.properties:/home/admin/canal-server/conf/example/instance.properties
+    # environment:
+       # 同一HA中的不同 canal server，canal.id不能相同
+      # - canal.id=1
+       # canal server绑定的本地IP信息
+      # - canal.ip=canal-server
+       # canal server注册到外部zookeeper、admin的ip信息
+      # - canal.register.ip=canal-server
+       # canal server提供socket服务的端口，默认11111
+      # - canal.port=7777
+       # zookeeper集群
+      # - canal.zkServers=canal-zk:2181
+       # 持久化
+      # - canal.instance.global.spring.xml=classpath:spring/default-instance.xml
+       # 过滤掉DML产生的query
+      # - canal.instance.filter.query.dml=true
+       # 是否忽略事务头和尾,true表示不需要写入TransactionBegin/Transactionend事件
+      # - canal.instance.filter.transaction.entry=true
+       # 数据库主库地址
+      # - canal.instance.master.address=canal-db:3306
+      # 在Mysql执行 SHOW MASTER STATUS;查看当前数据库的binlog
+      # - canal.instance.master.journal.name=mysql-bin.000006
+      # - canal.instance.master.position=467
+       # 主库用户名密码
+      # - canal.instance.dbUsername=root
+      # - canal.instance.dbPassword=secret
+       # mysql链接时默认schema
+      # - canal.instance.defaultDatabaseName=test
+       # mysql 数据解析编码
+      # - canal.instance.connectionCharset=UTF-8
+       # 黑名单/白名单
+      #- canal.instance.filter.black.regex=
+       # 这里的过滤不起作用，建议修改时最好测试下
+      # - canal.instance.filter.regex=.*
+       # topic
+      # - canal.mq.topic=mysql_test
+       # 可选项=tcp(默认), kafka, RocketMQ
+      # - canal.serverMode=kafka
+       # kafka/rocketmq 集群配置
+      # - canal.mq.servers=canal-kafka:9092
+      # - canal.mq.retries=0
+       # flagMessage模式下可以调大该值, 但不要超过MQ消息体大小上限
+      # - canal.mq.batchSize=16384
+      # - canal.mq.maxRequestSize=1048576
+       # 参考kafka参数linger.ms。kafka批量发送间隔。flatMessage模式下请将该值改大, 建议50-200
+      # - canal.mq.lingerMs=50
+      # - canal.mq.bufferMemory=33554432
+       # Canal的batch size, 默认50K, 由于kafka最大消息体限制请勿超过1M(900K以下)
+      # - canal.mq.canalBatchSize=50
+       # Canal get数据的超时时间, 单位=毫秒, 空为不限超时
+      # - canal.mq.canalGetTimeout=100
+       # 是否为flat json格式对象
+      # - canal.mq.flatMessage=true
+      # - canal.mq.compressionType=none
+       # 消息确认方式：all所有确认  1：Lear确认  0：发出去就算确认
+      # - canal.mq.acks=all
+       # kafka消息投递是否使用事务
+      # - canal.mq.transaction=false
+    depends_on:
+      - redis
+      - kafka
+      - db 
+      - zookeeper
+    networks:
+      - canal-test
+networks:
+  canal-test:
+    driver: bridge

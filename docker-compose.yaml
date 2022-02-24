@@ -103,6 +103,18 @@ services:
     networks:
       - canal-test
     restart: always  
+  eagle:
+    image: nickzurich/kafka-eagle:latest
+    container_name: canal-eagle
+    restart: always
+    environment:
+      EFAK_CLUSTER_ZK_LIST: canal-zk:2181
+    ports:
+      - 8048:8048    
+    depends_on:
+      - kafka
+    networks:
+      - canal-test
 networks:
   canal-test:
     driver: bridge
